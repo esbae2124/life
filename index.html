@@ -4,382 +4,539 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>인터랙티브 인생 그래프</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js 및 Annotation 플러그인 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
-        /* 캔버스 드래그 방지 및 커서 설정 */
-        canvas {
-            cursor: crosshair;
+        /* 기본 캔버스 및 오버레이 설정 */
+        #chart-wrapper {
+            position: relative;
+            width: 100%;
+            height: 600px;
             user-select: none;
             -webkit-user-select: none;
         }
-        /* 삭제 버튼 위치 보정 */
-        .delete-btn {
-            transform: translate(-50%, -100%);
-            margin-top: -10px;
+        canvas {
+            cursor: crosshair;
         }
+        /* SVG 연결선 오버레이 */
+        #svg-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        /* HTML 글상자 오버레이 */
+        #label-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* 컨테이너는 클릭 이벤트를 통과시킴 */
+            z-index: 20;
+        }
+        /* 개별 물리 글상자 스타일 */
+        .physics-label {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            white-space: pre-wrap; /* 행갈이 완벽 지원 */
+            pointer-events: auto; /* 글상자 자체는 클릭 가능하게 설정 */
+            cursor: pointer;
+            transition: border-color 0.2s, background-color 0.2s;
+            /* transform 은 JS에서 중앙 정렬을 위해 설정됨 */
+        }
+        .physics-label:hover {
+            background: #f8fafc;
+            border-color: #2563eb;
+            z-index: 30;
+        }
+        
+        /* 모달 애니메이션 */
+        .modal-enter { animation: fadeIn 0.2s ease-out forwards; }
+        .modal-leave { animation: fadeOut 0.15s ease-in forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes fadeOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.95); } }
     </style>
 </head>
-<body class="bg-slate-50 min-h-screen p-4 md:p-8 font-sans text-slate-800">
+<body class="bg-slate-100 min-h-screen p-4 md:p-8 font-sans text-slate-800">
 
-    <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-lg overflow-hidden border border-slate-100">
-        <!-- 헤더 영역 -->
-        <div class="bg-blue-600 p-6 text-white text-center">
-            <h1 class="text-3xl font-bold mb-2">나의 인생 그래프</h1>
-            <p class="text-blue-100 font-medium">빈 공간을 클릭하여 점을 추가하고, 기존 점을 클릭하여 삭제하세요.</p>
+    <div class="max-w-6xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
+        <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-8 text-white text-center">
+            <h1 class="text-3xl font-extrabold mb-3 tracking-tight">나의 인터랙티브 인생 그래프</h1>
+            <p class="text-blue-100 font-medium">빈 곳을 클릭해 점을 찍고, 점을 드래그해 이동시키며, 글상자를 클릭해 수정해보세요.</p>
         </div>
 
-        <div class="p-6">
-            <!-- 상단 안내 및 도구 버튼 -->
-            <div class="flex justify-between items-center mb-4">
-                <div class="flex items-center gap-3 text-sm text-slate-600">
-                    <span class="flex items-center gap-1"><span class="w-3 h-3 bg-blue-500 rounded-full inline-block"></span> 십자선을 보고 클릭하여 추가</span>
-                    <span class="flex items-center gap-1 ml-2"><span class="w-3 h-3 bg-red-500 rounded-full inline-block"></span> 점 클릭하여 삭제</span>
-                </div>
-                <button onclick="clearAll()" class="text-sm px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors font-semibold">
-                    모두 지우기
+        <div class="p-6 relative">
+            <div class="flex justify-end mb-4">
+                <button onclick="clearAll()" class="px-5 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors font-bold shadow-sm border border-slate-200">
+                    모두 지우기 🗑️
                 </button>
             </div>
 
-            <!-- 그래프 영역 -->
-            <div id="chart-wrapper" class="relative w-full h-[550px] border border-slate-200 rounded-xl bg-slate-50/30">
+            <!-- 그래프 컨테이너 (Canvas + SVG 오버레이 + Label 오버레이) -->
+            <div id="chart-wrapper" class="border-2 border-slate-100 rounded-2xl bg-slate-50 shadow-inner">
                 <canvas id="lifeChart"></canvas>
-                
-                <!-- 플로팅 삭제 버튼 (숨김 상태로 대기) -->
-                <button id="deleteBtn" class="hidden absolute bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg hover:bg-red-600 hover:scale-110 transition-all z-10 delete-btn text-base font-bold" aria-label="삭제">
-                    ✕
-                </button>
+                <svg id="svg-overlay"></svg>
+                <div id="label-overlay"></div>
             </div>
         </div>
     </div>
 
-    <!-- 데이터 입력 모달 팝업 -->
-    <div id="inputModal" class="hidden fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 opacity-0 transition-opacity duration-200">
-        <div class="bg-white p-6 rounded-xl shadow-2xl w-[90%] max-w-sm transform scale-95 transition-transform duration-200" id="modalContent">
-            <h3 class="font-bold text-xl mb-1 text-slate-800">사건 기록하기</h3>
-            <p id="modalCoords" class="text-sm text-blue-600 font-semibold mb-4 bg-blue-50 inline-block px-2 py-1 rounded"></p>
-            
-            <div class="mb-5">
-                <label for="eventInput" class="block text-sm font-medium text-slate-600 mb-1">어떤 일이 있었나요?</label>
-                <input type="text" id="eventInput" class="w-full border border-slate-300 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow" placeholder="예: 첫 취업, 세계 여행 등" autocomplete="off">
+    <div id="dataModal" class="hidden fixed inset-0 flex items-center justify-center z-[100]">
+        <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onclick="closeModal()"></div>
+        <div id="modalContent" class="bg-white p-6 rounded-2xl shadow-2xl w-[90%] max-w-md relative z-10 flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="modalTitle" class="font-extrabold text-xl text-slate-800">사건 기록하기</h3>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 font-bold text-xl">&times;</button>
             </div>
             
-            <div class="flex justify-end gap-2">
-                <button onclick="closeModal()" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium">취소</button>
-                <button onclick="saveDataPoint()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm">추가하기</button>
+            <div class="flex gap-4 mb-4">
+                <div class="flex-1 bg-blue-50/50 p-3 rounded-xl border border-blue-100">
+                    <label class="block text-xs font-bold text-blue-600 mb-1">나이 (X축)</label>
+                    <input type="number" id="inputAge" class="w-full bg-transparent font-bold text-lg focus:outline-none" readonly>
+                </div>
+                <div class="flex-1 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100">
+                    <label class="block text-xs font-bold text-indigo-600 mb-1">점수 (Y축)</label>
+                    <input type="number" id="inputScore" class="w-full bg-transparent font-bold text-lg focus:outline-none" readonly>
+                </div>
+            </div>
+            
+            <div class="mb-6">
+                <label for="inputEvent" class="block text-sm font-bold text-slate-700 mb-2">어떤 일이 있었나요? (줄바꿈 가능)</label>
+                <!-- 멀티라인 지원을 위한 textarea -->
+                <textarea id="inputEvent" rows="3" class="w-full border border-slate-300 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow resize-none" placeholder="여기에 사건 내용을 자세히 적어주세요."></textarea>
+            </div>
+            
+            <div class="flex justify-between items-center mt-auto">
+                <!-- 수정 시에만 보이는 삭제 버튼 -->
+                <button id="deleteBtn" onclick="deleteCurrentPoint()" class="px-4 py-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors font-bold hidden">삭제하기</button>
+                <div class="flex gap-2 ml-auto">
+                    <button onclick="closeModal()" class="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors font-bold">취소</button>
+                    <button onclick="saveData()" class="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all font-bold shadow-md hover:shadow-lg">저장하기</button>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        // 전역 상태 변수
-        let rawData = []; // 데이터 구조: { x: 나이, y: 점수, event: 사건이름 }
+        // 전역 상태
+        let rawData = [];
         let chartInstance = null;
-        let selectedIndexForDelete = -1;
-        let pendingPoint = { x: 0, y: 0 };
+        let physicsLabels = []; // 물리 엔진이 적용될 라벨 객체 배열
+        
+        // 상호작용 상태
+        let isDragging = false;
+        let dragTargetIndex = -1;
+        let clickStartPos = { x: 0, y: 0 };
+        let editingIndex = -1; // -1이면 새 데이터 추가, 0 이상이면 해당 인덱스 수정
 
-        // DOM 요소 캐싱
-        const deleteBtn = document.getElementById('deleteBtn');
-        const inputModal = document.getElementById('inputModal');
+        // DOM 요소
+        const canvas = document.getElementById('lifeChart');
+        const svgOverlay = document.getElementById('svg-overlay');
+        const labelOverlay = document.getElementById('label-overlay');
+        const modal = document.getElementById('dataModal');
         const modalContent = document.getElementById('modalContent');
-        const eventInput = document.getElementById('eventInput');
-        const modalCoords = document.getElementById('modalCoords');
-
-        // 십자선(Crosshair) 및 좌표축 라벨을 그리는 커스텀 Chart.js 플러그인
-        const crosshairPlugin = {
-            id: 'crosshair',
-            // 마우스 이동 시 좌표 추적
-            afterEvent(chart, args) {
-                const { type, x, y } = args.event;
-                if (type === 'mousemove') {
-                    chart.crosshair = { x, y };
-                    args.changed = true; // 차트 다시 그리기 유도
-                } else if (type === 'mouseout') {
-                    chart.crosshair = null;
-                    args.changed = true;
-                }
-            },
-            // 차트 렌더링 후 점선과 라벨을 최상단에 그리기
-            afterDraw(chart) {
-                if (!chart.crosshair) return;
-                
-                const { ctx, chartArea, scales: { x, y } } = chart;
-                const { x: mouseX, y: mouseY } = chart.crosshair;
-                
-                // 마우스가 차트 데이터 영역 안에 있을 때만 그리기
-                if (mouseX < chartArea.left || mouseX > chartArea.right || mouseY < chartArea.top || mouseY > chartArea.bottom) {
-                    return;
-                }
-
-                ctx.save();
-                
-                // 1. 십자 점선 그리기
-                ctx.beginPath();
-                ctx.setLineDash([5, 5]); // 점선 패턴
-                ctx.strokeStyle = 'rgba(100, 116, 139, 0.6)'; // slate-500 색상
-                ctx.lineWidth = 1.5;
-                
-                // 세로선
-                ctx.moveTo(mouseX, chartArea.top);
-                ctx.lineTo(mouseX, chartArea.bottom);
-                // 가로선
-                ctx.moveTo(chartArea.left, mouseY);
-                ctx.lineTo(chartArea.right, mouseY);
-                ctx.stroke();
-
-                // 2. 픽셀 좌표를 실제 데이터 값으로 변환
-                // 나이는 정수, 점수는 소수점 첫째자리까지 표시
-                let valX = Math.round(x.getValueForPixel(mouseX));
-                let valY = y.getValueForPixel(mouseY).toFixed(1);
-
-                // 값 범위 제한 (시각적 일관성)
-                valX = Math.max(0, valX); 
-                valY = Math.max(-10, Math.min(10, parseFloat(valY))).toFixed(1);
-
-                ctx.setLineDash([]); // 점선 초기화
-
-                // 3. X축 (나이) 하단 라벨 박스 그리기
-                const textX = `${valX}살`;
-                ctx.fillStyle = 'rgba(30, 41, 59, 0.9)'; // 짙은 배경
-                const xLabelWidth = 50;
-                const xLabelHeight = 24;
-                ctx.fillRect(mouseX - (xLabelWidth / 2), chartArea.bottom, xLabelWidth, xLabelHeight);
-                
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 12px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(textX, mouseX, chartArea.bottom + (xLabelHeight / 2));
-
-                // 4. Y축 (점수) 좌측 라벨 박스 그리기
-                const textY = `${valY}점`;
-                const yLabelWidth = 55;
-                const yLabelHeight = 24;
-                ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
-                ctx.fillRect(chartArea.left - yLabelWidth, mouseY - (yLabelHeight / 2), yLabelWidth, yLabelHeight);
-                
-                ctx.fillStyle = 'white';
-                ctx.textAlign = 'center';
-                ctx.fillText(textY, chartArea.left - (yLabelWidth / 2), mouseY);
-
-                ctx.restore();
-            }
-        };
-
+        
         function initChart() {
-            const ctx = document.getElementById('lifeChart').getContext('2d');
-            
+            const ctx = canvas.getContext('2d');
             chartInstance = new Chart(ctx, {
-                type: 'scatter', 
-                plugins: [crosshairPlugin], // 커스텀 플러그인 등록
+                type: 'scatter',
                 data: {
                     datasets: [{
-                        label: '인생 흐름',
                         data: rawData,
-                        showLine: true, 
-                        borderColor: '#2563eb', 
-                        backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                        showLine: true,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
                         borderWidth: 3,
-                        pointRadius: 6,
-                        pointHoverRadius: 9,
-                        pointBackgroundColor: '#2563eb',
-                        pointBorderColor: '#ffffff',
-                        pointBorderWidth: 2,
-                        tension: 0.3, 
+                        pointRadius: 8,
+                        pointHoverRadius: 12,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#3b82f6',
+                        pointBorderWidth: 3,
+                        tension: 0.4, // 곡선
                         fill: true
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    onClick: handleChartClick,
-                    // 마우스 이벤트 활성화 (크로스헤어를 위해 필요)
-                    events: ['mousemove', 'mouseout', 'click', 'touchstart', 'touchmove'],
+                    animation: { duration: 0 }, // 커스텀 드래그를 위해 기본 애니메이션 제거
                     plugins: {
                         legend: { display: false },
-                        tooltip: { enabled: false }, // 커스텀 글상자를 사용하므로 툴팁 비활성화
-                        annotation: { annotations: {} }
+                        tooltip: { enabled: false } // 기본 툴팁 비활성화
                     },
-                    layout: {
-                        padding: { top: 60, bottom: 60, left: 10, right: 30 }
-                    },
+                    layout: { padding: { top: 30, bottom: 30, left: 20, right: 20 } },
                     scales: {
                         x: {
-                            type: 'linear',
-                            position: 'bottom',
-                            min: 0,
-                            max: 100, // 기본 최대 나이 100세
-                            title: { display: true, text: '나이 (세)', font: { weight: 'bold', size: 14 }, color: '#475569' },
-                            grid: { color: 'rgba(0,0,0,0.03)' }
+                            type: 'linear', position: 'bottom', min: 0, max: 100,
+                            title: { display: true, text: '나이 (세)', font: { weight: 'bold', size: 14 } }
                         },
                         y: {
-                            min: -10,
-                            max: 10,
-                            title: { display: true, text: '행복도 / 성취도', font: { weight: 'bold', size: 14 }, color: '#475569' },
-                            grid: { color: 'rgba(0,0,0,0.06)' }
+                            min: -12, max: 12, // 라벨 공간 확보용
+                            title: { display: true, text: '행복도 / 성취도', font: { weight: 'bold', size: 14 } },
+                            ticks: {
+                                stepSize: 2,
+                                callback: val => (val >= -10 && val <= 10) ? val : ''
+                            },
+                            grid: {
+                                color: ctx => (ctx.tick.value > 10 || ctx.tick.value < -10) ? 'transparent' : 'rgba(0,0,0,0.08)'
+                            }
                         }
-                    },
-                    animation: {
-                        duration: 300 // 부드러운 차트 업데이트
                     }
                 }
             });
-        }
-
-        function handleChartClick(event, elements, chart) {
-            // 1. 기존 점을 클릭한 경우 (삭제 모드 진입)
-            if (elements.length > 0) {
-                const element = elements[0];
-                selectedIndexForDelete = element.index;
-                
-                // 클릭된 점의 픽셀 좌표 가져와서 버튼 띄우기
-                const meta = chart.getDatasetMeta(element.datasetIndex);
-                const pointInfo = meta.data[element.index];
-                
-                deleteBtn.style.left = pointInfo.x + 'px';
-                deleteBtn.style.top = pointInfo.y + 'px';
-                deleteBtn.classList.remove('hidden');
-                return;
-            }
-
-            // 빈 공간 클릭 시 기존 삭제버튼 숨김
-            hideDeleteBtn();
-
-            // 2. 빈 배경을 클릭한 경우 (추가 모드 진입)
-            const canvasPosition = Chart.helpers.getRelativePosition(event, chart);
-            let dataX = chart.scales.x.getValueForPixel(canvasPosition.x);
-            let dataY = chart.scales.y.getValueForPixel(canvasPosition.y);
-
-            // 추가할 때는 깔끔하게 정수로 반올림
-            dataX = Math.round(dataX);
-            dataY = Math.round(dataY);
-            dataX = Math.max(0, Math.min(100, dataX)); 
-            dataY = Math.max(-10, Math.min(10, dataY)); 
-
-            // 모달 열기
-            pendingPoint = { x: dataX, y: dataY };
-            openModal(dataX, dataY);
-        }
-
-        function openModal(x, y) {
-            modalCoords.innerText = `나이: ${x}세 | 행복도: ${y}점`;
-            eventInput.value = '';
             
-            inputModal.classList.remove('hidden');
-            setTimeout(() => {
-                inputModal.classList.remove('opacity-0');
-                modalContent.classList.remove('scale-95');
-            }, 10);
+            // 이벤트 리스너 등록 (캔버스)
+            canvas.addEventListener('mousedown', onPointerDown);
+            canvas.addEventListener('mousemove', onPointerMove);
+            window.addEventListener('mouseup', onPointerUp);
+            // 터치 지원
+            canvas.addEventListener('touchstart', onPointerDown, {passive: false});
+            canvas.addEventListener('touchmove', onPointerMove, {passive: false});
+            window.addEventListener('touchend', onPointerUp);
             
-            eventInput.focus();
+            // 물리 엔진 루프 시작
+            requestAnimationFrame(physicsLoop);
         }
 
-        function closeModal() {
-            inputModal.classList.add('opacity-0');
-            modalContent.classList.add('scale-95');
-            setTimeout(() => {
-                inputModal.classList.add('hidden');
-            }, 200);
+        function syncData() {
+            // X축(나이) 기준으로 정렬
+            rawData.sort((a, b) => a.x - b.x);
+            
+            // Chart.js 데이터 갱신
+            chartInstance.data.datasets[0].data = rawData;
+            chartInstance.update();
+
+            // 라벨 객체 동기화
+            // 기존 DOM 요소 초기화
+            labelOverlay.innerHTML = '';
+            svgOverlay.innerHTML = '';
+            
+            const oldLabels = [...physicsLabels];
+            physicsLabels = [];
+
+            rawData.forEach((item, index) => {
+                // 이전 속도나 위치값을 유지하려고 시도 (자연스러운 트랜지션을 위해)
+                const existing = oldLabels.find(l => l.dataRef === item);
+                
+                const el = document.createElement('div');
+                el.className = 'physics-label';
+                el.innerText = item.event;
+                
+                // 글상자 클릭 이벤트 (수정/삭제 모달 열기)
+                el.addEventListener('mousedown', (e) => { e.stopPropagation(); }); // 캔버스 드래그 방지
+                el.addEventListener('touchstart', (e) => { e.stopPropagation(); }, {passive: true});
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openModal(index);
+                });
+
+                labelOverlay.appendChild(el);
+
+                physicsLabels.push({
+                    dataRef: item,
+                    index: index,
+                    el: el,
+                    x: existing ? existing.x : 0, // 현재 위치 (스프링 계산용)
+                    y: existing ? existing.y : 0,
+                    vx: existing ? existing.vx : 0, // X 속도
+                    vy: existing ? existing.vy : 0, // Y 속도
+                    targetX: 0, // 점의 픽셀 X
+                    targetY: 0  // 점의 픽셀 Y
+                });
+            });
         }
 
-        // 엔터키 입력 지원
-        eventInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') saveDataPoint();
-        });
-
-        // 새로운 데이터 저장
-        function saveDataPoint() {
-            const eventText = eventInput.value.trim();
-            if (!eventText) {
-                eventInput.classList.add('ring-2', 'ring-red-400');
-                setTimeout(() => eventInput.classList.remove('ring-2', 'ring-red-400'), 500);
-                return;
-            }
-
-            rawData.push({
-                x: pendingPoint.x,
-                y: pendingPoint.y,
-                event: eventText
+        function physicsLoop() {
+            const meta = chartInstance.getDatasetMeta(0);
+            
+            // 1. Target 업데이트 (점의 현재 픽셀 위치 계산)
+            physicsLabels.forEach((label, i) => {
+                if (!meta.data[i]) return;
+                const pt = meta.data[i];
+                
+                label.targetX = pt.x;
+                // 점수가 0이상이면 위로, 음수면 아래로 기본 타겟 위치 설정
+                const isPositive = label.dataRef.y >= 0;
+                label.targetY = pt.y + (isPositive ? -60 : 60);
+                
+                // 새로 생성된 라벨의 경우 초기 위치를 타겟 위치로 강제 지정하여 화면 밖에서 날아오는 현상 방지
+                if (label.x === 0 && label.y === 0) {
+                    label.x = label.targetX;
+                    label.y = label.targetY;
+                }
             });
 
-            updateAndRenderChart();
-            closeModal();
-        }
+            // 2. 물리 계산 (스프링 장력 + 상호 밀어내기 척력)
+            const k = 0.08; // 용수철 강성
+            const damp = 0.65; // 마찰력 (속도 감쇠)
+            const repulsionBase = 120; // 겹칠 때 밀어내는 기본 힘
 
-        // 점 삭제 이벤트
-        deleteBtn.addEventListener('click', function() {
-            if (selectedIndexForDelete > -1) {
-                rawData.splice(selectedIndexForDelete, 1);
-                updateAndRenderChart();
-                hideDeleteBtn();
+            for (let i = 0; i < physicsLabels.length; i++) {
+                const l1 = physicsLabels[i];
+                
+                // 스프링 힘 (목표 지점으로 당기기)
+                l1.vx += (l1.targetX - l1.x) * k;
+                l1.vy += (l1.targetY - l1.y) * k;
+
+                // 척력 (다른 라벨들과 겹치는지 확인)
+                const rect1 = l1.el.getBoundingClientRect();
+                // 오버레이 컨테이너 기준의 로컬 좌표 계산을 위한 보정값 (필요시)
+                const w1 = rect1.width + 10; // 여백 포함
+                const h1 = rect1.height + 10;
+
+                for (let j = i + 1; j < physicsLabels.length; j++) {
+                    const l2 = physicsLabels[j];
+                    const rect2 = l2.el.getBoundingClientRect();
+                    const w2 = rect2.width + 10;
+                    const h2 = rect2.height + 10;
+
+                    // 두 라벨의 중심 거리 계산
+                    const dx = l1.x - l2.x;
+                    const dy = l1.y - l2.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                    // AABB 기반 충돌(겹침) 검사
+                    const overlapX = (w1 + w2) / 2 - Math.abs(dx);
+                    const overlapY = (h1 + h2) / 2 - Math.abs(dy);
+
+                    if (overlapX > 0 && overlapY > 0) {
+                        // 겹쳤다! 밀어내기
+                        let forceX = 0, forceY = 0;
+                        if (overlapX < overlapY) {
+                            forceX = (dx / dist) * repulsionBase * (overlapX / w1);
+                        } else {
+                            forceY = (dy / dist) * repulsionBase * (overlapY / h1);
+                        }
+                        
+                        l1.vx += forceX; l1.vy += forceY;
+                        l2.vx -= forceX; l2.vy -= forceY;
+                    }
+                }
             }
-        });
 
-        function hideDeleteBtn() {
-            deleteBtn.classList.add('hidden');
-            selectedIndexForDelete = -1;
-        }
-
-        function clearAll() {
-            if(rawData.length === 0) return;
-            if(confirm('모든 기록을 삭제하시겠습니까?')) {
-                rawData = [];
-                updateAndRenderChart();
-                hideDeleteBtn();
-            }
-        }
-
-        function updateAndRenderChart() {
-            // X축(나이) 오름차순 정렬
-            rawData.sort((a, b) => a.x - b.x);
-
-            chartInstance.data.datasets[0].data = rawData;
+            // 3. 위치 업데이트 및 DOM 적용
+            let svgContent = '';
             
-            // Annotation(글상자) 다시 생성
-            chartInstance.options.plugins.annotation.annotations = generateAnnotations();
+            physicsLabels.forEach((label, i) => {
+                if (!meta.data[i]) return;
+                const pt = meta.data[i];
+                
+                // 속도 적용 및 감쇠
+                label.vx *= damp;
+                label.vy *= damp;
+                label.x += label.vx;
+                label.y += label.vy;
+
+                // 글상자 중심이 x, y에 오도록 transform 적용
+                label.el.style.transform = `translate(${label.x}px, ${label.y}px) translate(-50%, -50%)`;
+
+                // SVG 선 그리기 (점의 중심부터 라벨의 하단/상단까지)
+                const lineStartX = pt.x;
+                const lineStartY = pt.y;
+                // 라벨이 점보다 위에 있으면 라벨의 하단 중앙, 아래에 있으면 상단 중앙 부근으로 선 연결
+                const isAbove = label.y < pt.y;
+                const lineEndX = label.x;
+                const lineEndY = label.y + (isAbove ? 15 : -15);
+
+                svgContent += `
+                    <line x1="${lineStartX}" y1="${lineStartY}" x2="${lineEndX}" y2="${lineEndY}" 
+                          stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.7"/>
+                `;
+            });
+            
+            svgOverlay.innerHTML = svgContent;
+
+            requestAnimationFrame(physicsLoop);
+        }
+
+        function getEventCoords(e) {
+            let clientX, clientY;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function onPointerDown(e) {
+            const pos = getEventCoords(e);
+            clickStartPos = { ...pos };
+            
+            const meta = chartInstance.getDatasetMeta(0);
+            let closestIndex = -1;
+            let closestDist = 20; // 20px 반경 내에 점이 있으면 선택
+
+            // 클릭한 위치와 가장 가까운 점 찾기
+            meta.data.forEach((pt, i) => {
+                const dist = Math.sqrt(Math.pow(pt.x - pos.x, 2) + Math.pow(pt.y - pos.y, 2));
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closestIndex = i;
+                }
+            });
+
+            if (closestIndex !== -1) {
+                // 기존 점 클릭 -> 드래그 준비
+                isDragging = true;
+                dragTargetIndex = closestIndex;
+                if(e.cancelable) e.preventDefault(); // 스크롤 방지
+            }
+        }
+
+        function onPointerMove(e) {
+            if (!isDragging || dragTargetIndex === -1) return;
+            if (e.cancelable) e.preventDefault();
+
+            const pos = getEventCoords(e);
+            
+            // 픽셀 좌표를 차트 데이터 값으로 변환
+            let dataX = chartInstance.scales.x.getValueForPixel(pos.x);
+            let dataY = chartInstance.scales.y.getValueForPixel(pos.y);
+
+            // 값 범위 제한 및 반올림
+            dataX = Math.max(0, Math.min(100, Math.round(dataX)));
+            dataY = Math.max(-10, Math.min(10, Math.round(dataY)));
+
+            // 데이터 실시간 업데이트 (물리 엔진이 알아서 라벨을 끌고 옴)
+            rawData[dragTargetIndex].x = dataX;
+            rawData[dragTargetIndex].y = dataY;
             
             chartInstance.update();
         }
 
-        // 글상자 생성 함수
-        function generateAnnotations() {
-            const annotations = {};
-            rawData.forEach((item, index) => {
-                const isPositive = item.y >= 0;
-                annotations[`label_${index}`] = {
-                    type: 'label',
-                    xValue: item.x,
-                    yValue: item.y,
-                    // 양수는 위로, 음수는 아래로 띄우기
-                    yAdjust: isPositive ? -40 : 40,
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                    borderColor: '#2563eb',
-                    borderWidth: 1.5,
-                    borderRadius: 6,
-                    content: [item.event],
-                    font: { size: 12, weight: 'bold' },
-                    color: '#1e293b',
-                    padding: { top: 6, bottom: 6, left: 10, right: 10 },
-                    callout: { 
-                        display: true, 
-                        borderColor: '#2563eb', 
-                        borderWidth: 1.5,
-                        margin: 0
-                    },
-                    drawTime: 'afterDatasetsDraw'
-                };
-            });
-            return annotations;
+        function onPointerUp(e) {
+            const pos = getEventCoords(e);
+            const distMoved = Math.sqrt(Math.pow(pos.x - clickStartPos.x, 2) + Math.pow(pos.y - clickStartPos.y, 2));
+
+            if (isDragging) {
+                // 드래그 종료
+                isDragging = false;
+                
+                // 만약 이동 거리가 5px 미만이라면 단순 클릭으로 간주하여 수정 모달 띄우기
+                if (distMoved < 5) {
+                    openModal(dragTargetIndex);
+                } else {
+                    // 드래그가 끝났으므로 배열 재정렬(X축 기준) 및 동기화
+                    syncData(); 
+                }
+                dragTargetIndex = -1;
+            } else if (distMoved < 5 && e.target === canvas) {
+                // 빈 캔버스 클릭 -> 새 점 추가 모달 띄우기
+                let dataX = chartInstance.scales.x.getValueForPixel(pos.x);
+                let dataY = chartInstance.scales.y.getValueForPixel(pos.y);
+                dataX = Math.max(0, Math.min(100, Math.round(dataX)));
+                dataY = Math.max(-10, Math.min(10, Math.round(dataY)));
+                
+                openModal(-1, dataX, dataY);
+            }
         }
 
-        // 화면 리사이즈 시 떠있는 삭제버튼 숨김
-        window.addEventListener('resize', hideDeleteBtn);
+        const inputAge = document.getElementById('inputAge');
+        const inputScore = document.getElementById('inputScore');
+        const inputEvent = document.getElementById('inputEvent');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const modalTitle = document.getElementById('modalTitle');
 
-        // 로드 완료 시 차트 초기화
+        function openModal(index, tempX = 0, tempY = 0) {
+            editingIndex = index;
+            
+            if (index === -1) {
+                // 새 데이터 추가
+                modalTitle.innerText = "새로운 사건 기록하기";
+                inputAge.value = tempX;
+                inputScore.value = tempY;
+                inputEvent.value = "";
+                deleteBtn.classList.add('hidden');
+            } else {
+                // 기존 데이터 수정
+                modalTitle.innerText = "사건 수정하기";
+                inputAge.value = rawData[index].x;
+                inputScore.value = rawData[index].y;
+                inputEvent.value = rawData[index].event;
+                deleteBtn.classList.remove('hidden');
+            }
+
+            modal.classList.remove('hidden');
+            modalContent.classList.remove('modal-leave');
+            modalContent.classList.add('modal-enter');
+            
+            setTimeout(() => inputEvent.focus(), 100);
+        }
+
+        function closeModal() {
+            modalContent.classList.remove('modal-enter');
+            modalContent.classList.add('modal-leave');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 150);
+        }
+
+        function saveData() {
+            const eventText = inputEvent.value.trim();
+            if (!eventText) {
+                inputEvent.classList.add('ring-2', 'ring-red-400');
+                setTimeout(() => inputEvent.classList.remove('ring-2', 'ring-red-400'), 500);
+                return;
+            }
+
+            if (editingIndex === -1) {
+                // 추가
+                rawData.push({
+                    x: parseInt(inputAge.value),
+                    y: parseInt(inputScore.value),
+                    event: eventText
+                });
+            } else {
+                // 수정
+                rawData[editingIndex].event = eventText;
+            }
+
+            syncData();
+            closeModal();
+        }
+
+        function deleteCurrentPoint() {
+            if (editingIndex > -1) {
+                rawData.splice(editingIndex, 1);
+                syncData();
+                closeModal();
+            }
+        }
+
+        function clearAll() {
+            if(rawData.length === 0) return;
+            if(confirm('모든 기록을 정말 삭제하시겠습니까?')) {
+                rawData = [];
+                syncData();
+            }
+        }
+
+        // 초기화 실행
         window.onload = initChart;
+        // 리사이즈 시 차트가 다시 그려지도록 약간의 지연 후 동기화
+        window.addEventListener('resize', () => {
+            setTimeout(() => { chartInstance.update(); }, 100);
+        });
 
     </script>
 </body>
